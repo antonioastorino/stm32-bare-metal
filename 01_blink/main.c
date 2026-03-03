@@ -3,37 +3,11 @@
  */
 
 #include <stdint.h>
-#include <stdbool.h>
+#include "stm32f103xb.h"
+
 #define IOPC_BIT_NR (4)
-#define GPIO(port) ((GPIOBase*)(0x40010800 + 0x400 * (port - 'A')))
-#define RCC ((struct rcc*)0x40021000)
-
-struct rcc
-{
-    volatile uint32_t CR;       // offset 0x00
-    volatile uint32_t CFGR;     // offset 0x04
-    volatile uint32_t CIR;      // offset 0x08
-    volatile uint32_t AHB2RSTR; // offset 0x0C
-    volatile uint32_t AHB1RSTR; // offset 0x10
-    volatile uint32_t AHBENR;   // offset 0x14
-    volatile uint32_t APB2ENR;  // offset 0x18
-    volatile uint32_t APB1ENR;  // offset 0x1C
-    volatile uint32_t BDCR;     // offset 0x20
-    volatile uint32_t CSR;      // offset 0x24
-};
-
-typedef struct
-{
-    volatile uint32_t CRL;  // offset 0x00
-    volatile uint32_t CRH;  // offset 0x04
-    volatile uint32_t IDR;  // offset 0x08
-    volatile uint32_t ODR;  // offset 0x0C
-    volatile uint32_t BSRR; // offset 0x10
-    volatile uint16_t BRR;  // offset 0x14
-    volatile uint32_t LCKR; // offset 0x18
-} GPIOBase;
-
-// Enum values are per datasheet: 0, 1, 2, 3
+#define LOW (0)
+#define HIGH (1)
 typedef enum
 {
     GPIO_MODE_INPUT,
@@ -57,9 +31,8 @@ typedef enum
     PULLED,
 } GPIOInputConfig;
 
-static inline void gpio_set_mode(char port, uint8_t pin, GPIOMode mode, uint8_t cnf)
+static inline void gpio_set_mode(GPIO_TypeDef* gpio_port, uint8_t pin, GPIOMode mode, uint8_t cnf)
 {
-    GPIOBase* gpio_port = GPIO(port); // GPIO port
     if (pin < 8)
     {
         gpio_port->CRL &= ~(15UL << (pin * 4));                      // Clear existing setting
@@ -72,10 +45,9 @@ static inline void gpio_set_mode(char port, uint8_t pin, GPIOMode mode, uint8_t 
     }
 }
 
-static inline void gpio_write(char port, uint8_t pin, bool val)
+static inline void gpio_write(GPIO_TypeDef* gpio_port, uint8_t pin, bool val)
 {
-    GPIOBase* gpio_port = GPIO(port);
-    gpio_port->BSRR     = (1U << pin) << (val ? 0 : 16);
+    gpio_port->BSRR = (1U << pin) << (val ? 0 : 16);
 }
 
 static inline void spin(volatile uint32_t count)
@@ -87,13 +59,13 @@ static inline void spin(volatile uint32_t count)
 int main(void)
 {
     RCC->APB2ENR |= 1UL << IOPC_BIT_NR; // Enable GPIO clock for PORTC
-    gpio_write('C', 13, false);
-    gpio_set_mode('C', 13, GPIO_MODE_OUTPUT_FAST, OPEN_DRAIN); // Set blue LED to output mode
-    while (true)
+    gpio_write(GPIOC, 13, LOW);
+    gpio_set_mode(GPIOC, 13, GPIO_MODE_OUTPUT_FAST, OPEN_DRAIN); // Set blue LED to output mode
+    while (1)
     {
-        gpio_write('C', 13, true);
+        gpio_write(GPIOC, 13, HIGH);
         spin(99099);
-        gpio_write('C', 13, false);
+        gpio_write(GPIOC, 13, LOW);
         spin(999999);
     }
     return 0;
