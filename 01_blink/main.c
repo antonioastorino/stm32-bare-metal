@@ -5,16 +5,21 @@
 #include <stdint.h>
 #include "stm32f103xb.h"
 
+#define IOPA_BIT_NR (2)
 #define IOPC_BIT_NR (4)
-#define PLLRDY_BIT (25)
-#define PLLON_BIT (24)
-#define HSERDY_BIT (17)
-#define HSEON_BIT (16)
+#define PLLRDY_BIT_NR (25)
+#define PLLON_BIT_NR (24)
+#define HSERDY_BIT_NR (17)
+#define HSEON_BIT_NR (16)
 #define LOW (0)
 #define HIGH (1)
-#define GPIO_MODE_Msk (GPIO_CRL_MODE0_Msk | GPIO_CRL_CNF0_Msk) // 4 bits
-#define BLINK_PERIOD_MS (1000)
+#define GPIO_MODE_Msk (0xFUL) // 4 bits
+#define BLINK_PERIOD_MS (100)
 #define SYST ((SYST_TypeDef*)(0xE000E010))
+#define CRYSTAL_FREQ_HZ (8'000'000)
+#define SYSTICK_FREQ_HZ (1'000)
+#define is_pll_ready() (RCC->CR & (1UL << PLLRDY_BIT_NR))
+#define is_hse_ready() (RCC->CR & (1UL << HSERDY_BIT_NR))
 
 static volatile uint32_t g_systick = 0;
 
@@ -49,59 +54,51 @@ typedef struct
     uint32_t CALIB;
 } SYST_TypeDef;
 
-static inline void gpio_set_mode(GPIO_TypeDef* gpio_port, const uint8_t pin, const GPIOMode mode, const uint8_t cnf)
-{
-    if (pin < 8)
-    {
-        gpio_port->CRL &= ~((GPIO_MODE_Msk) << (pin * 4));                    // Clear existing setting
-        gpio_port->CRL |= ((mode | (cnf << 2)) & GPIO_MODE_Msk) << (pin * 4); // Set new mode
+/* It won't compile if `__pin` is a number literal */
+#define gpio_write(__port, __pin, __val) GPIO##__port->BSRR = (1U << __pin) << (__val ? 0 : 16);
+
+/* It won't compile if `__pin` is a number literal */
+#define gpio_init(__port, __pin, __mode, __cnf, __val)                                             \
+    {                                                                                              \
+        RCC->APB2ENR |= RCC_APB2ENR_IOP##__port##EN;                                               \
+        gpio_write(__port, __pin, __val);                                                          \
+        if (__pin < 8U)                                                                            \
+        {                                                                                          \
+            GPIO##__port->CRL &= ~((GPIO_MODE_Msk) << (__pin * 4));                                \
+            GPIO##__port->CRL |= (((__mode | (__cnf << 2)) & GPIO_MODE_Msk) << (__pin * 4));       \
+        }                                                                                          \
+        else                                                                                       \
+        {                                                                                          \
+            GPIO##__port->CRH &= ~(GPIO_MODE_Msk << ((__pin - 8) * 4));                            \
+            GPIO##__port->CRH |= (((__mode | (__cnf << 2)) & GPIO_MODE_Msk) << ((__pin - 8) * 4)); \
+        }                                                                                          \
     }
-    else
-    {
-        gpio_port->CRH &= ~(GPIO_MODE_Msk << ((pin - 8) * 4));                                // Clear existing setting
-        gpio_port->CRH |= ((uint32_t)(mode | (cnf << 2)) & GPIO_MODE_Msk) << ((pin - 8) * 4); // Set new mode
-    }
-}
 
-static inline void gpio_write(GPIO_TypeDef* gpio_port, uint8_t pin, bool val)
+static inline void systick_init(void)
 {
-    gpio_port->BSRR = (1U << pin) << (val ? 0 : 16);
-}
-
-static inline void spin(volatile uint32_t count)
-{
-    while (count--)
-        (void)0;
-}
-#define is_pll_ready() (RCC->CR & (1UL << PLLRDY_BIT))
-#define is_hse_ready() (RCC->CR & (1UL << HSERDY_BIT))
-
-int main(void)
-{
-    // GPIO initialization
-    RCC->APB2ENR |= 1UL << IOPC_BIT_NR; // Enable GPIO clock for PORTC
-    gpio_write(GPIOC, 13, LOW);
-    gpio_set_mode(GPIOC, 13, GPIO_MODE_OUTPUT_FAST, OPEN_DRAIN);
-
-    // SysTick initialization
-    SYST->RVR = 8000000 / 1000;
+    SYST->RVR = CRYSTAL_FREQ_HZ / SYSTICK_FREQ_HZ;
     SYST->CVR = 0;
     SYST->CSR = 7;
-    RCC->CFGR |= 1UL << 16 & 1;
-
-    RCC->CR = (1UL << PLLON_BIT) | (1UL << HSEON_BIT);
+    RCC->CR   = (1UL << PLLON_BIT_NR) | (1UL << HSEON_BIT_NR);
     while (!(is_pll_ready() && is_hse_ready()))
     {
         asm("nop");
     }
-    gpio_write(GPIOC, 13, LOW);
+}
+
+// static inline void pwm_init(uint16_t freq, uint16_t duty_cycle)
+int main(void)
+{
+    uint8_t blink_pin = 13;
+    gpio_init(C, blink_pin, GPIO_MODE_OUTPUT_FAST, OPEN_DRAIN, HIGH);
+    systick_init();
     uint8_t toggle      = HIGH;
     uint32_t toggleTime = g_systick + BLINK_PERIOD_MS / 2;
     while (1)
     {
         if (g_systick > toggleTime)
         {
-            gpio_write(GPIOC, 13, toggle);
+            gpio_write(C, 13, toggle);
             toggle = !toggle;
             toggleTime += (BLINK_PERIOD_MS / 2);
         }
