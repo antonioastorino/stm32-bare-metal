@@ -14,13 +14,13 @@
 #define LOW (0)
 #define HIGH (1)
 #define GPIO_MODE_Msk (0xFUL) // 4 bits
-#define BLINK_PERIOD_MS (100)
+#define UPDATE_PERIOD_MS (10)
 #define SYST ((SYST_TypeDef*)(0xE000E010))
 #define CRYSTAL_FREQ_HZ (8'000'000)
 #define SYSTICK_FREQ_HZ (1'000)
 #define is_pll_ready() (RCC->CR & (1UL << PLLRDY_BIT_NR))
 #define is_hse_ready() (RCC->CR & (1UL << HSERDY_BIT_NR))
-
+#define TIM1_MAX_COUNT (999)
 static volatile uint32_t g_systick = 0;
 
 typedef enum
@@ -74,6 +74,19 @@ typedef struct
         }                                                                                          \
     }
 
+static inline void pwm_a8_init(void)
+{
+    const uint8_t pin = 8;
+    gpio_init(A, pin, GPIO_MODE_OUTPUT_FAST, (uint32_t)AF_PUSH_PULL, HIGH);
+    RCC->APB2ENR |= RCC_APB2ENR_TIM1EN; // Enable TIM1
+    TIM1->ARR = TIM1_MAX_COUNT;
+    TIM1->PSC = 71UL; // Clock frequency / (PSC + 1)
+    TIM1->CCMR1 |= TIM_CCMR1_OC1M_2 | TIM_CCMR1_OC1M_1 | TIM_CCMR1_OC1PE;
+    TIM1->CCER |= TIM_CCER_CC1E;
+    TIM1->BDTR |= TIM_BDTR_MOE;
+    TIM1->CR1 |= TIM_CR1_CEN; // Enable CK_CNT
+}
+
 static inline void systick_init(void)
 {
     SYST->RVR = CRYSTAL_FREQ_HZ / SYSTICK_FREQ_HZ;
@@ -88,18 +101,17 @@ static inline void systick_init(void)
 
 int main(void)
 {
-    uint8_t blink_pin = 13;
-    gpio_init(C, blink_pin, GPIO_MODE_OUTPUT_FAST, OPEN_DRAIN, HIGH);
+    pwm_a8_init();
     systick_init();
-    uint8_t toggle      = HIGH;
-    uint32_t toggleTime = g_systick + BLINK_PERIOD_MS / 2;
+    uint32_t update_time = g_systick + UPDATE_PERIOD_MS;
+    uint32_t duty_cycle  = 0;
     while (1)
     {
-        if (g_systick > toggleTime)
+        if (g_systick > update_time)
         {
-            gpio_write(C, 13, toggle);
-            toggle = !toggle;
-            toggleTime += (BLINK_PERIOD_MS / 2);
+            update_time += UPDATE_PERIOD_MS;
+            TIM1->CCR1 = duty_cycle;
+            duty_cycle = (duty_cycle + 10) % TIM1_MAX_COUNT;
         }
     }
     return 0;
